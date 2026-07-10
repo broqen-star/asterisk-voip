@@ -1,0 +1,14 @@
+services:
+  asterisk:
+    build: .
+    container_name: asterisk
+    # host ネットワーク必須。SIP/RTP は動的ポートを使うため、
+    # ブリッジ+ポート指定だと音声が片通話になりがち。
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      # 自分で書いた設定だけを個別に上書きし、他はイメージの既定を使う
+      - ./asterisk/pjsip.conf:/etc/asterisk/pjsip.conf:ro
+      - ./asterisk/extensions.conf:/etc/asterisk/extensions.conf:ro
+      - ./asterisk/rtp.conf:/etc/asterisk/rtp.conf:ro
+    # NAS(Synology/QNAP等)で権限エラーが出る場合は、上の各行末尾 :ro を :Z に変える
