@@ -11,4 +11,5 @@ services:
       - ./asterisk/pjsip.conf:/etc/asterisk/pjsip.conf:ro
       - ./asterisk/extensions.conf:/etc/asterisk/extensions.conf:ro
       - ./asterisk/rtp.conf:/etc/asterisk/rtp.conf:ro
-    # NAS(Synology/QNAP等)で権限エラーが出る場合は、上の各行末尾 :ro を :Z に変える
+      - ./asterisk/sounds:/usr/share/asterisk/sounds/en/custom:ro
+
