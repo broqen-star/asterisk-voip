@@ -6,7 +6,7 @@ import time
 AMI_HOST = "127.0.0.1"
 AMI_PORT = 5038
 AMI_USER = "hookflash"
-AMI_SECRET = "ここに強いパスワードを設定"
+AMI_SECRET = "hookflash"
 
 
 def agi_read_env():
