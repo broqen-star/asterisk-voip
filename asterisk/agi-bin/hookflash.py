@@ -52,13 +52,22 @@ def main():
         s = socket.create_connection((AMI_HOST, AMI_PORT), timeout=5)
         ami_recv(s)  # banner
 
-        s.sendall(
-            f"Action: Login\r\nUsername: {AMI_USER}\r\nSecret: {AMI_SECRET}\r\n\r\n".encode()
+        login_action = (
+            "Action: Login\r\n"
+            f"Username: {AMI_USER}\r\n"
+            f"Secret: {AMI_SECRET}\r\n"
+            "\r\n"
         )
+        s.sendall(login_action.encode())
         login_resp = ami_recv(s)
         agi_cmd(f'VERBOSE "hookflash: login_resp={login_resp.strip()!r}" 1')
 
-        s.sendall(f"Action: SendFlash\r\nChannel: {peer}\r\n\r\n".encode())
+        flash_action = (
+            "Action: SendFlash\r\n"
+            f"Channel: {peer}\r\n"
+            "\r\n"
+        )
+        s.sendall(flash_action.encode())
         flash_resp = ami_recv(s)
         agi_cmd(f'VERBOSE "hookflash: flash_resp={flash_resp.strip()!r}" 1')
 
