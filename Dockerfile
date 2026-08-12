@@ -9,8 +9,8 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # hookflash.py をAGIディレクトリへ配置（Debian/Ubuntu系パッケージの既定AGIパスはここ）
-COPY asterisk/agi-bin/hookflash.py /var/lib/asterisk/agi-bin/hookflash.py
-RUN chmod +x /var/lib/asterisk/agi-bin/hookflash.py
+COPY asterisk/agi-bin/hookflash.py /usr/share/asterisk/agi-bin/hookflash.py
+RUN chmod +x /usr/share/asterisk/agi-bin/hookflash.py
 
 # コンテナではフォアグラウンド実行し、ログを docker の標準出力へ流す
 #   -f : デーモン化しない（fork しない）
