@@ -12,4 +12,5 @@ services:
       - ./asterisk/extensions.conf:/etc/asterisk/extensions.conf:ro
       - ./asterisk/rtp.conf:/etc/asterisk/rtp.conf:ro
       - ./asterisk/sounds:/usr/share/asterisk/sounds/en/custom:ro
-
+      - ./asterisk/manager.conf:/etc/asterisk/manager.conf
+      - ./asterisk/features.conf:/etc/asterisk/features.conf
