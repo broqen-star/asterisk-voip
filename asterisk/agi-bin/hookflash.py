@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-"""
-Linphoneで '##' が押されたときにdialplanから呼ばれるAGI。
-自分(self)チャネルのBRIDGEPEER（=ht813側チャネル）へAMI経由でSendFlashを1回投げるだけ。
-"""
 import socket
 import sys
 import time
@@ -10,7 +6,7 @@ import time
 AMI_HOST = "127.0.0.1"
 AMI_PORT = 5038
 AMI_USER = "hookflash"
-AMI_SECRET = "hookflash"  # ← 必ず変更してください
+AMI_SECRET = "ここに強いパスワードを設定"
 
 
 def agi_read_env():
@@ -30,6 +26,14 @@ def agi_cmd(cmd):
     return sys.stdin.readline()
 
 
+def ami_recv(s):
+    time.sleep(0.2)
+    try:
+        return s.recv(4096).decode(errors="replace")
+    except OSError:
+        return ""
+
+
 def main():
     agi_read_env()
 
@@ -42,18 +46,21 @@ def main():
         agi_cmd('VERBOSE "hookflash: BRIDGEPEER not found" 1')
         return
 
+    agi_cmd(f'VERBOSE "hookflash: target={peer}" 1')
+
     try:
         s = socket.create_connection((AMI_HOST, AMI_PORT), timeout=5)
-        s.recv(4096)  # banner
+        ami_recv(s)  # banner
+
         s.sendall(
             f"Action: Login\r\nUsername: {AMI_USER}\r\nSecret: {AMI_SECRET}\r\n\r\n".encode()
         )
-        time.sleep(0.2)
-        s.recv(4096)
+        login_resp = ami_recv(s)
+        agi_cmd(f'VERBOSE "hookflash: login_resp={login_resp.strip()!r}" 1')
 
         s.sendall(f"Action: SendFlash\r\nChannel: {peer}\r\n\r\n".encode())
-        time.sleep(0.2)
-        s.recv(4096)
+        flash_resp = ami_recv(s)
+        agi_cmd(f'VERBOSE "hookflash: flash_resp={flash_resp.strip()!r}" 1')
 
         s.sendall(b"Action: Logoff\r\n\r\n")
         s.close()
