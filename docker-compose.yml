@@ -6,6 +6,8 @@ services:
     # ブリッジ+ポート指定だと音声が片通話になりがち。
     network_mode: host
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       - TZ=Asia/Tokyo
     volumes:
@@ -14,4 +16,7 @@ services:
       - ./asterisk/extensions.conf:/etc/asterisk/extensions.conf:ro
       - ./asterisk/rtp.conf:/etc/asterisk/rtp.conf:ro
       - ./asterisk/sounds:/usr/share/asterisk/sounds/en/custom:ro
+      # Discord通知スクリプト
+      - ./asterisk/scripts:/etc/asterisk/scripts:ro
+      # 不応答時の録音（伝言）の保存先。ここだけ書き込み可(rw)にする
       - ./recordings:/var/spool/asterisk/recordings
