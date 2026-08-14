@@ -6,10 +6,12 @@ services:
     # ブリッジ+ポート指定だと音声が片通話になりがち。
     network_mode: host
     restart: unless-stopped
+    environment:
+      - TZ=Asia/Tokyo
     volumes:
       # 自分で書いた設定だけを個別に上書きし、他はイメージの既定を使う
       - ./asterisk/pjsip.conf:/etc/asterisk/pjsip.conf:ro
       - ./asterisk/extensions.conf:/etc/asterisk/extensions.conf:ro
       - ./asterisk/rtp.conf:/etc/asterisk/rtp.conf:ro
       - ./asterisk/sounds:/usr/share/asterisk/sounds/en/custom:ro
-
+      - ./recordings:/var/spool/asterisk/recordings
