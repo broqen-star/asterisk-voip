@@ -242,9 +242,10 @@ MAIL_ATTACH=1                              # 0 にすると本文だけ（音声
 
 送信は curl の SMTP 機能を使うので、追加インストールは不要。
 
-### 送信ログの確認
+### 送信ログの確認（ここを見る）
 
-通知の実行結果は **`./recordings/notify.log`** に残る。
+通知の実行結果は **`./recordings/notify.log`** に必ず残る。
+「送ったのか」「届かなかったのはなぜか」はまずこのファイルを見る。
 
 ```
 tail -f recordings/notify.log
@@ -299,6 +300,79 @@ Linphone からダイヤルしてもテストできる:
 
 メールが失敗するときは `.env` に `MAIL_DEBUG=1` を足すと、
 curl のSMTP通信内容までログに出る（パスワードは出力されない）。
+
+### メール送信の失敗コード早見表
+
+ログの `curl終了コード=` を見る。意味はログにも日本語で併記される。
+
+| コード | 意味 | 対処 |
+| --- | --- | --- |
+| 6 | ホスト名を解決できない | `MAIL_SMTP_URL` のホスト名を確認 |
+| 7 | 接続できない | ポート/ファイアウォールを確認 |
+| 28 | タイムアウト | サーバ到達性を確認 |
+| 35 | TLSハンドシェイク失敗 | ポートとスキームの対応（下表）を確認 |
+| 60 | サーバ証明書を検証できない | 下記「証明書エラー」参照 |
+| 67 | SMTP認証に失敗 | `MAIL_USER` / `MAIL_PASS` を確認 |
+
+### 証明書エラー（curl終了コード 60）
+
+接続はできているが、サーバ証明書をコンテナ内のCAストアで検証できない状態。
+社内メールサーバでよく起きる。まず証明書の中身を確認する（ホスト側で実行）:
+
+```
+echo | openssl s_client -connect メールサーバ:587 -starttls smtp 2>/dev/null \
+  | openssl x509 -noout -subject -issuer -dates
+```
+
+`subject` が接続先と違う名前（特に `*.〇〇` のワイルドカード）だった場合は、
+**証明書に有効な名前の一覧(SAN)** も確認する。ここに接続先名があれば設定は正しい。
+
+```
+echo | openssl s_client -connect メールサーバ:587 -starttls smtp 2>/dev/null \
+  | openssl x509 -noout -text | grep -A2 "Subject Alternative Name"
+
+dig +short -x サーバのIP        # 逆引きで正式名を調べる
+dig +short MX ドメイン名        # 事業者が案内するホスト名が分かることが多い
+```
+
+対処は上から順に検討する:
+
+1. **ホスト名不一致**なら、証明書の `subject`/SAN に出ている名前を
+   `MAIL_SMTP_URL` のホスト名に使う。これで直るなら一番きれい。
+   その名前がDNSに載っていない場合は `MAIL_RESOLVE` で接続先IPを固定する:
+
+   ```
+   MAIL_SMTP_URL=smtp://ms01.example.jp:587
+   MAIL_RESOLVE=ms01.example.jp:587:203.0.113.10
+   ```
+
+   証明書は正しい名前で検証されたまま、接続だけIP直結になる。
+2. **社内CA/自己署名**なら、CA証明書(PEM)を置いてパスを指定する（推奨）:
+
+   ```
+   mkdir -p certs && cp 社内CA.pem certs/ca.pem
+   ```
+
+   `docker-compose.yml` の asterisk サービスの volumes に1行足す:
+
+   ```
+   - ./certs:/etc/asterisk/certs:ro
+   ```
+
+   `.env`:
+
+   ```
+   MAIL_CAINFO=/etc/asterisk/certs/ca.pem
+   ```
+
+3. **どうしても解決しない場合の応急処置**:
+
+   ```
+   MAIL_TLS_INSECURE=1
+   ```
+
+   通信自体は暗号化されるが「相手が本物か」を確認しなくなる。
+   LAN内の自社サーバに限って使い、恒久策は 1 か 2 で行うこと。
 
 ### 通知されないときは
 

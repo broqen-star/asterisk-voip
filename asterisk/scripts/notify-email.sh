@@ -21,6 +21,18 @@
 #   MAIL_ATTACH_MAX 添付する上限バイト数（既定 20000000 = 約20MB）
 #   MAIL_DEBUG      1 で curl の通信内容(-v)もログに残す（原因調査用）
 #
+# TLS証明書まわり（curl終了コード60が出るときに使う）:
+#   MAIL_CAINFO         社内CA/自己署名の証明書ファイル(PEM)のパス。
+#                       これを指定するのが正攻法。compose でマウントして渡す。
+#   MAIL_TLS_INSECURE   1 で証明書の検証を省略する。中身は暗号化されるが
+#                       「相手が本物か」を確認しないため、LAN内の自社サーバ
+#                       限定の応急処置とすること。
+#   MAIL_RESOLVE        「証明書の名前ではDNSが引けない」ときの逃げ道。
+#                       ホスト:ポート:IP の形式で接続先IPを固定する。
+#                       例) MAIL_RESOLVE=ms01.pxbb.jp:587:157.101.128.132
+#                       この場合 MAIL_SMTP_URL 側も同じホスト名にすること。
+#                       証明書は正しい名前で検証されるので TLS_INSECURE より安全。
+#
 # 成功/失敗は必ずログに残す。失敗時は curl のエラー文をそのまま出す。
 #==============================================================
 set -u
@@ -120,7 +132,28 @@ IFS="$OLDIFS"
 [ "${MAIL_STARTTLS:-0}" = "1" ] && CURL_ARGS+=(--ssl-reqd)
 [ "${MAIL_DEBUG:-0}" = "1" ] && CURL_ARGS+=(-v)
 
-log "送信: server=${URL} from=${FROM} to=${RCPT_LIST} 添付=${ATTACHED} size=${SIZE}bytes"
+# TLS: 社内CAを指定するのが正攻法。無理な場合だけ検証を外す。
+TLS_NOTE=""
+if [ -n "${MAIL_CAINFO:-}" ]; then
+  if [ -f "$MAIL_CAINFO" ]; then
+    CURL_ARGS+=(--cacert "$MAIL_CAINFO")
+    TLS_NOTE=" ca=${MAIL_CAINFO}"
+  else
+    log "警告: MAIL_CAINFO のファイルがありません: ${MAIL_CAINFO}（指定を無視します）"
+  fi
+fi
+if [ "${MAIL_TLS_INSECURE:-0}" = "1" ]; then
+  CURL_ARGS+=(--insecure)
+  TLS_NOTE="${TLS_NOTE} 証明書検証=なし"
+fi
+
+# DNSに載っていないホスト名を、証明書の検証はそのままにIP直結で解決させる
+if [ -n "${MAIL_RESOLVE:-}" ]; then
+  CURL_ARGS+=(--resolve "$MAIL_RESOLVE")
+  TLS_NOTE="${TLS_NOTE} resolve=${MAIL_RESOLVE}"
+fi
+
+log "送信: server=${URL} from=${FROM} to=${RCPT_LIST} 添付=${ATTACHED} size=${SIZE}bytes${TLS_NOTE}"
 
 ERR=$(curl "${CURL_ARGS[@]}" 2>&1 >/dev/null)
 RC=$?
@@ -130,7 +163,21 @@ if [ "$RC" = "0" ]; then
   # -v を付けたときだけ通信内容も残す（パスワードは出力されない）
   [ "${MAIL_DEBUG:-0}" = "1" ] && [ -n "$ERR" ] && log "詳細: $(printf '%s' "$ERR" | tr '\n' '|' | cut -c1-1000)"
 else
-  log "失敗: curl終了コード=${RC} 内容=$(printf '%s' "${ERR:-なし}" | tr '\n' '|' | cut -c1-500): $NAME"
+  # curl の終了コードは原因の切り分けに直結するので日本語を添える
+  case "$RC" in
+    6)  HINT="SMTPサーバのホスト名を解決できない（MAIL_SMTP_URL のホスト名を確認。証明書に合わせた名前がDNSに無い場合は MAIL_RESOLVE でIPを指定する）" ;;
+    7)  HINT="SMTPサーバに接続できない（ポート/ファイアウォールを確認）" ;;
+    28) HINT="タイムアウト（サーバ到達不可、または応答が遅い）" ;;
+    35) HINT="TLSハンドシェイク失敗（ポートとスキームの対応を確認。587なら smtp:// + MAIL_STARTTLS=1、465なら smtps://）" ;;
+    51|60) HINT="サーバ証明書を検証できない。社内CA/自己署名なら MAIL_CAINFO にCA証明書を指定する（応急処置は MAIL_TLS_INSECURE=1）" ;;
+    67) HINT="SMTP認証に失敗（MAIL_USER / MAIL_PASS を確認。Gmailはアプリパスワード）" ;;
+    55|56) HINT="送受信エラー（接続が途中で切れた。添付サイズ上限の可能性）" ;;
+    *)  HINT="" ;;
+  esac
+  # 肝心のエラー文は出力の「末尾」に出るため、先頭ではなく末尾を残す
+  DETAIL=$(printf '%s' "${ERR:-なし}" | tr '\n' '|' | tail -c 600)
+  log "失敗: curl終了コード=${RC}${HINT:+ (${HINT})}: $NAME"
+  log "失敗の詳細: ${DETAIL}"
   exit 1
 fi
 
