@@ -2,18 +2,21 @@
 #==============================================================
 # notify-discord.sh — 留守番録音をDiscordへ通知する
 #--------------------------------------------------------------
-# 呼び出し元: extensions.conf の h エクステンション
+# 呼び出し元: notify.sh（直接叩いてもテストできる）
 #   引数 $1 = 録音ファイルのフルパス(.wav)
 #   引数 $2 = 発信者番号(CID)
 # Webhook URL は環境変数 DISCORD_WEBHOOK_URL から取る(.env で設定)
+#
+# 送るかどうかの共通判定（短すぎる録音の除外など）は notify.sh 側で
+# 済んでいる。ここは Discord への送信だけを担当する。
 #
 # ※ここで異常終了してもAsterisk本体には影響しない（TrySystemで呼ぶ）。
 #   ログは logger 経由でコンテナの標準出力に出る。
 #==============================================================
 set -u
 
-FILE="${1:-}"
-CID="${2:-unknown}"
+FILE="${1:-${NOTIFY_FILE:-}}"
+CID="${2:-${NOTIFY_CID:-unknown}}"
 URL="${DISCORD_WEBHOOK_URL:-}"
 
 log() { logger -t discord "$*"; }
@@ -21,20 +24,15 @@ log() { logger -t discord "$*"; }
 [ -n "$URL" ]  || { log "DISCORD_WEBHOOK_URL が未設定のため通知しません"; exit 0; }
 [ -f "$FILE" ] || { log "ファイルが見つかりません: $FILE"; exit 0; }
 
-# 8KB未満(=約0.5秒未満)は、無言のまま切られたものとみなして通知しない
-SIZE=$(stat -c%s "$FILE" 2>/dev/null || echo 0)
-if [ "$SIZE" -lt 8192 ]; then
-  log "録音が短すぎるため通知しません(${SIZE}bytes): $FILE"
-  exit 0
-fi
+# notify.sh から渡ってこない（単体テスト等）場合はここで求める
+NAME="${NOTIFY_NAME:-$(basename "$FILE")}"
+SIZE="${NOTIFY_SIZE:-$(stat -c%s "$FILE" 2>/dev/null || echo 0)}"
+SEC="${NOTIFY_SEC:-$(( SIZE / 16000 ))}"   # 8kHz/16bit モノラル想定のおおよその秒数
+WHEN="${NOTIFY_WHEN:-$(date '+%Y-%m-%d %H:%M:%S')}"
 
 # JSONに入れる値なので、番号以外の文字が混ざっても壊れないよう落としておく
 CID_SAFE=$(printf '%s' "$CID" | tr -cd '0-9a-zA-Z_-')
 [ -n "$CID_SAFE" ] || CID_SAFE="unknown"
-
-NAME=$(basename "$FILE")
-SEC=$(( SIZE / 16000 ))            # 8kHz/16bit モノラル想定のおおよその秒数
-WHEN=$(date '+%Y-%m-%d %H:%M:%S')
 
 PAYLOAD=$(printf '{"embeds":[{"title":"☎️ 留守番電話に新しい伝言","color":2984943,"fields":[{"name":"＜発信者＞","value":"%s"},{"name":"＜受信時刻＞","value":"%s"},{"name":"＜長さ＞","value":"約%s秒"}],"footer":{"text":"%s"}}]}' \
   "$CID_SAFE" "$WHEN" "$SEC" "$NAME")

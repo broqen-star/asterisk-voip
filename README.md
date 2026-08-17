@@ -188,6 +188,90 @@ exten => _0X.,1,Dial(PJSIP/${EXTEN}@ht813,60)    ; 0発信の外線
 
 ---
 
+## 8. 不応答時の伝言通知（Discord / メール）
+
+内線200が `RING_TIMEOUT` 秒以内に出ないと、案内を流して伝言を録音し、
+録音があれば通知が飛ぶ。通知先は **Discord とメールを個別にオン/オフ**できる。
+
+設定は `.env`（`.env.sample` をコピーして作る）で行う:
+
+```
+cp .env.sample .env
+```
+
+### オン/オフの切り替え
+
+```
+NOTIFY_DISCORD=1     # 1=Discordへ送る / 0=送らない
+NOTIFY_EMAIL=1       # 1=メールで送る / 0=送らない
+```
+
+両方 `1` なら両方に届く。両方 `0` なら録音だけ残り通知はしない。
+変更後は `docker compose up -d`（`.env` は起動時に読まれるため再起動が必要）。
+
+### Discord の設定
+
+```
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/【ID】/【トークン】
+```
+
+Discordのチャンネル設定 → 連携サービス → ウェブフック で発行する。
+**URLを知っている人は誰でも投稿できる**ので、`.env` ごと外部に出さないこと。
+
+### メールの設定
+
+```
+MAIL_SMTP_URL=smtps://smtp.gmail.com:465   # 587番なら smtp://... + MAIL_STARTTLS=1
+MAIL_STARTTLS=0
+MAIL_FROM=voip-notify@example.com
+MAIL_TO=you@example.com                    # カンマ区切りで複数可
+MAIL_USER=voip-notify@example.com          # 認証不要なサーバなら空でよい
+MAIL_PASS=【パスワード】
+MAIL_ATTACH=1                              # 0 にすると本文だけ（音声を添付しない）
+```
+
+ポートと URL スキームの対応:
+
+| ポート | MAIL_SMTP_URL | MAIL_STARTTLS |
+| --- | --- | --- |
+| 465（SMTPS） | `smtps://ホスト:465` | `0` |
+| 587（STARTTLS） | `smtp://ホスト:587` | `1` |
+
+> **Gmail を使う場合**: 2段階認証を有効にしたうえで「アプリ パスワード」を発行し、
+> `MAIL_PASS` にはそれを入れる。通常のログインパスワードでは弾かれる。
+
+送信は curl の SMTP 機能を使うので、追加インストールは不要。
+
+### 動作確認
+
+録音を待たずにスクリプトを直接叩けばテストできる（`.env` の設定がそのまま使われる）:
+
+```
+# 適当な録音ファイルを1つ選んで通知させてみる
+docker exec asterisk bash -c \
+  'bash /etc/asterisk/scripts/notify.sh "$(ls -t /var/spool/asterisk/recordings/*.wav | head -1)" 5105'
+
+# 結果はコンテナのログに出る
+docker compose logs --tail=20 asterisk
+```
+
+Linphone から `203`（録音テスト）にダイヤルすると録音そのものの確認ができる。
+
+### 通知されないときは
+
+- **何も飛ばない** → `NOTIFY_DISCORD` / `NOTIFY_EMAIL` が `0` のまま。
+  ログに「通知先がすべてオフのため送信しません」が出る。
+- **短い伝言だけ届かない** → 8KB（約0.5秒）未満は無言切断とみなして送らない仕様。
+  しきい値は `NOTIFY_MIN_BYTES` で変えられる。
+- **メールだけ失敗する** → ログの `mail` タグに curl のエラーが出る。
+  認証エラーならアプリパスワード、接続エラーならポート/スキームの対応表を確認。
+- **`.env` を書き換えたのに反映されない** → `docker compose restart` ではなく
+  `docker compose up -d` で作り直す。
+
+---
+
+---
+
 ## トラブルシューティング
 
 - **【最頻出】REGISTERは届いているのに Asterisk が無反応（ファイアウォール ufw）**
