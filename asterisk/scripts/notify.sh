@@ -52,11 +52,21 @@ if [ ! -f "$FILE" ]; then
   exit 0
 fi
 
-# 8KB未満(=約0.5秒未満)は、無言のまま切られたものとみなして通知しない
-MIN_BYTES="${NOTIFY_MIN_BYTES:-8192}"
+# 短すぎる録音は「ビープ直後に切られた」「ノイズを拾っただけ」とみなして通知しない。
+# ※通知を止めるだけで、ファイル自体は残る（./recordings や内線202で確認できる）。
+#
+# しきい値は秒で指定する。バイト数への換算は 8kHz/16bit モノラル = 16000バイト/秒。
+# NOTIFY_MIN_BYTES を明示した場合はそちらを優先する（従来設定との互換用）。
+MIN_SEC="${NOTIFY_MIN_SEC:-3}"
+case "$MIN_SEC" in
+  ''|*[!0-9]*) log "警告: NOTIFY_MIN_SEC が不正です(${MIN_SEC})。3秒として扱います"; MIN_SEC=3 ;;
+esac
+MIN_BYTES="${NOTIFY_MIN_BYTES:-$(( MIN_SEC * 16000 ))}"
+
 SIZE=$(stat -c%s "$FILE" 2>/dev/null || echo 0)
 if [ "$SIZE" -lt "$MIN_BYTES" ]; then
-  log "中止: 録音が短すぎます(${SIZE}bytes < ${MIN_BYTES}bytes): $FILE"
+  log "中止: 録音が短すぎます(約$(( SIZE / 16000 ))秒 / ${SIZE}bytes < ${MIN_BYTES}bytes = ${MIN_SEC}秒): $FILE"
+  log "      ファイルは残っています: $FILE"
   exit 0
 fi
 
