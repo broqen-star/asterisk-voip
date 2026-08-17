@@ -1,13 +1,13 @@
 # 既存PBX内線 ↔ IP子機 連携構成（Docker + Asterisk + HT813）
 
 既存PBXのアナログ内線1本を、HT813(FXO)経由でAsteriskに取り込み、
-スマホ(Linphone)やPC・ラズパイから **着信を受け、発信もできる**ようにする一式です。
-既存のPBX・ナースコール・非常用電話には一切触れず、IP子機を「足す」構成。
+スマホ(Linphone)やPCから 着信を受け、発信もできるようにする一式です。
+既存のPBXに影響を与えず、IP子機として追加する構成。
 
-構成: `PBX内線 ↔ HT813(FXO) ↔ Asterisk(このDocker) ↔ Linphone/PC/ラズパイ`
+構成: `PBX内線 ↔ HT813(FXO) ↔ Asterisk(このDocker) ↔ スマホ/PC`
 
 できること（実機で動作確認済み）:
-- 既存内線番号あての着信を Linphone/PC で受ける
+- 既存内線番号あての着信を Linphone で受ける
 - Linphone から既存内線（例 5xxx / 8xxx）へ発信
 - Linphone から外線へ発信（PBXの 0発信 仕様に対応）
 - 通話終了の検出（PBXの話中音検出で切断）
@@ -25,7 +25,7 @@
 - サーバ・HT813・スマホが **同じLAN**（同じルータ配下）にいること
 - サーバのLAN内IPアドレスを控えておく（例では `192.168.1.50` とする）
   - 確認: `ip a`（Linux）/ ルータの端末一覧 など
-  - できれば **DHCP固定** にしておくと後がラク
+  - できれば固定IPにしておいたほうがいい
 
 ## ファイル構成
 
@@ -46,14 +46,8 @@ asterisk-voip/
 
 `asterisk/pjsip.conf` を開き、2か所の `password=` を自分の値に変えます。
 
-- `phone-auth` の `password` … スマホ/ラズパイ側で使う
+- `phone-auth` の `password` … スマホ/PC側で使う
 - `ht813-auth` の `password` … **HT813本体にも同じ値**を設定する
-
-推し。適当な強いパスワードを作るなら:
-
-```bash
-openssl rand -base64 18
-```
 
 ## 2. ビルドして起動
 
@@ -87,7 +81,7 @@ dialplan show from-pstn     ; 着信ルートの確認
 ## 4. HT813 の設定（FXO側）
 
 HT813のLAN側IPをbrowserで開いて管理画面へ（初期は本体のIPをルータで確認）。
-**要点だけ**。項目名はファーム版で多少違います。
+**要点だけ**。項目名はバージョンによって多少違います。
 
 ### アカウント（Asteriskへ登録）
 - Primary SIP Server: `192.168.1.50`（サーバのIP）
@@ -102,7 +96,7 @@ HT813のLAN側IPをbrowserで開いて管理画面へ（初期は本体のIPを�
 
 ### 外線着信をSIPへ流す（ここが肝）
 - **Number of Rings**: 1〜2（PSTNが何回鳴ったらHT813が応答するか）※FXO PORTタブ
-- **Stage Method (1/2)**: `1`（FXO PORT → Channel Dialing。既定が2の版あり）
+- **Stage Method (1/2)**: `1`（FXO PORT → Channel Dialing）
 - **Wait for Dial Tone**: No（同上）
 - **PSTN Ring Thru FXS**: No（FXO PORTタブ）
 - 優先コーデック: PCMU / PCMA（= ulaw / alaw）（FXO PORTタブ Preferred Vocoder）
@@ -112,11 +106,11 @@ HT813のLAN側IPをbrowserで開いて管理画面へ（初期は本体のIPを�
   - なお extensions.conf 側で「どんな番号でも内線200を鳴らす」ようにしてあるため、
     ここが空でも着信は成立します（入れておくと意図が明確）
 
-### 切断検出（FXO最大の難所。最初はデフォルトで着信を成立させ、後で詰める）
+### 切断検出
 症状: 相手が切っても通話が切れ残る（無音のまま繋がりっぱなし）。
 FXO PORTタブの **FXO Termination** で、効きやすい順に **1つずつ試す**:
 
-1. **PSTN Disconnect Tone Detection = Yes**（話中音検出）★本環境で有効だった方法
+1. **PSTN Disconnect Tone Detection = Yes**（話中音検出）
    - PSTN Disconnect Tone を **日本の話中音**に: `f1=400@-32,c=500/500;`
      （既定 `f1=480@-32,f2=620@-32,c=500/500;` は米国向け）
    - PBX側の設定変更が不要なのが利点。この構成のNEC PBXではこれで解決。
@@ -142,10 +136,6 @@ FXO PORTタブの **FXO Termination** で、効きやすい順に **1つずつ�
 - Transport: UDP
 
 登録に成功すると、Asteriskコンソールの `pjsip show contacts` に出てきます。
-
-> ラズパイでも受けたい場合は、baresip 等で同じ `phone` /
-> 同じパスワードで登録すれば、同じ内線が両方で一斉に鳴ります
-> （`phone-aor` は max_contacts=3）。
 
 ---
 
@@ -397,7 +387,7 @@ dig +short MX ドメイン名        # 事業者が案内するホスト名が�
 
 ## トラブルシューティング
 
-- **【最頻出】REGISTERは届いているのに Asterisk が無反応（ファイアウォール ufw）**
+- **REGISTERは届いているのに Asterisk が無反応（ファイアウォール ufw）**
   症状: `sudo tcpdump -n -i any udp port 5060` で HT813→サーバの REGISTER は
   見える（`In` 方向）のに、逆向きの応答（`Out` 方向）が一切出ず、Asterisk の
   ログにも REGISTER が現れない。HT813 は Not Registered のまま。
@@ -430,15 +420,10 @@ dig +short MX ドメイン名        # 事業者が案内するホスト名が�
 
 - **片方向しか音声が聞こえない / 無音**
   ほぼ `network_mode: host` になっていないのが原因。compose を確認。
-  NASのDockerだとhostネットワークが制限されることがある（下記）。
 
 - **同じWi-Fiなのにスマホからサーバに繋がらない**
   会社Wi-Fiの **APアイソレーション/ゲスト分離** の可能性。
   サーバと同じ有線/業務用SSIDにスマホを載せる。
-
-- **NAS(Synology/QNAP)で動かす**
-  host ネットワークやポート競合(5060)に注意。権限エラー時は
-  docker-compose.yml の各volumeの `:ro` を `:Z` に変更。
 
 ---
 
