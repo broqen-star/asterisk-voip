@@ -19,24 +19,27 @@
 #   MAIL_FROM_NAME  差出人の表示名（既定 Asterisk 留守番電話）
 #   MAIL_ATTACH     0 にすると音声を添付せず本文だけ送る（既定 1）
 #   MAIL_ATTACH_MAX 添付する上限バイト数（既定 20000000 = 約20MB）
+#   MAIL_DEBUG      1 で curl の通信内容(-v)もログに残す（原因調査用）
 #
-# ※ここで異常終了してもAsterisk本体には影響しない（TrySystemで呼ぶ）。
+# 成功/失敗は必ずログに残す。失敗時は curl のエラー文をそのまま出す。
 #==============================================================
 set -u
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+NOTIFY_TAG="mail"
+. "$SCRIPT_DIR/notify-lib.sh"
 
 FILE="${1:-${NOTIFY_FILE:-}}"
 CID="${2:-${NOTIFY_CID:-unknown}}"
 
-log() { logger -t mail "$*"; }
-
-[ -f "$FILE" ] || { log "ファイルが見つかりません: $FILE"; exit 0; }
+[ -f "$FILE" ] || { log "未送信: ファイルが見つかりません: $FILE"; exit 0; }
 
 URL="${MAIL_SMTP_URL:-}"
 FROM="${MAIL_FROM:-}"
 TO="${MAIL_TO:-}"
-[ -n "$URL" ]  || { log "MAIL_SMTP_URL が未設定のため通知しません"; exit 0; }
-[ -n "$FROM" ] || { log "MAIL_FROM が未設定のため通知しません";     exit 0; }
-[ -n "$TO" ]   || { log "MAIL_TO が未設定のため通知しません";       exit 0; }
+[ -n "$URL" ]  || { log "未送信: MAIL_SMTP_URL が未設定です"; exit 0; }
+[ -n "$FROM" ] || { log "未送信: MAIL_FROM が未設定です";     exit 0; }
+[ -n "$TO" ]   || { log "未送信: MAIL_TO が未設定です";       exit 0; }
 
 # notify.sh から渡ってこない（単体テスト等）場合はここで求める
 NAME="${NOTIFY_NAME:-$(basename "$FILE")}"
@@ -65,7 +68,7 @@ BODY="留守番電話に新しい伝言が入りました。
 Asterisk (自動送信)
 "
 
-MAILFILE=$(mktemp /tmp/notify-mail.XXXXXX) || { log "一時ファイルを作成できません"; exit 0; }
+MAILFILE=$(mktemp /tmp/notify-mail.XXXXXX) || { log "未送信: 一時ファイルを作成できません"; exit 1; }
 trap 'rm -f "$MAILFILE"' EXIT
 
 {
@@ -102,18 +105,33 @@ printf -- '--%s--\r\n' "$BOUNDARY" >> "$MAILFILE"
 
 # 宛先はカンマ区切り。エンベロープには1件ずつ --mail-rcpt で渡す
 CURL_ARGS=(-sS -m 120 --url "$URL" --mail-from "$FROM" --upload-file "$MAILFILE")
+RCPT_LIST=""
 OLDIFS="$IFS"; IFS=','
 for addr in $TO; do
   addr="$(printf '%s' "$addr" | tr -d '[:space:]')"
-  [ -n "$addr" ] && CURL_ARGS+=(--mail-rcpt "$addr")
+  if [ -n "$addr" ]; then
+    CURL_ARGS+=(--mail-rcpt "$addr")
+    RCPT_LIST="${RCPT_LIST}${RCPT_LIST:+,}${addr}"
+  fi
 done
 IFS="$OLDIFS"
 
 [ -n "${MAIL_USER:-}" ] && CURL_ARGS+=(--user "${MAIL_USER}:${MAIL_PASS:-}")
 [ "${MAIL_STARTTLS:-0}" = "1" ] && CURL_ARGS+=(--ssl-reqd)
+[ "${MAIL_DEBUG:-0}" = "1" ] && CURL_ARGS+=(-v)
 
-if ERR=$(curl "${CURL_ARGS[@]}" 2>&1 >/dev/null); then
-  log "メール通知しました(添付${ATTACHED}): $NAME → $TO"
+log "送信: server=${URL} from=${FROM} to=${RCPT_LIST} 添付=${ATTACHED} size=${SIZE}bytes"
+
+ERR=$(curl "${CURL_ARGS[@]}" 2>&1 >/dev/null)
+RC=$?
+
+if [ "$RC" = "0" ]; then
+  log "成功: 添付${ATTACHED}: $NAME → ${RCPT_LIST}"
+  # -v を付けたときだけ通信内容も残す（パスワードは出力されない）
+  [ "${MAIL_DEBUG:-0}" = "1" ] && [ -n "$ERR" ] && log "詳細: $(printf '%s' "$ERR" | tr '\n' '|' | cut -c1-1000)"
 else
-  log "メール通知に失敗しました: $NAME : ${ERR:-unknown error}"
+  log "失敗: curl終了コード=${RC} 内容=$(printf '%s' "${ERR:-なし}" | tr '\n' '|' | cut -c1-500): $NAME"
+  exit 1
 fi
+
+exit 0

@@ -242,25 +242,71 @@ MAIL_ATTACH=1                              # 0 にすると本文だけ（音声
 
 送信は curl の SMTP 機能を使うので、追加インストールは不要。
 
+### 送信ログの確認
+
+通知の実行結果は **`./recordings/notify.log`** に残る。
+
+```
+tail -f recordings/notify.log
+```
+
+出力例（成功時）:
+
+```
+2026-08-17 09:12:03 [notify] 通知処理を開始: file=/var/spool/asterisk/recordings/20260817-091150_5105.wav cid=5105 discord=1 email=1
+2026-08-17 09:12:03 [discord] 送信: 音声付き file=20260817-091150_5105.wav size=182008bytes
+2026-08-17 09:12:04 [discord] 成功: HTTP 204 (音声付き): 20260817-091150_5105.wav
+2026-08-17 09:12:04 [mail] 送信: server=smtps://smtp.gmail.com:465 from=... to=... 添付=あり size=182008bytes
+2026-08-17 09:12:07 [mail] 成功: 添付あり: 20260817-091150_5105.wav → you@example.com
+2026-08-17 09:12:07 [notify] 通知処理を正常終了: 20260817-091150_5105.wav
+```
+
+失敗時は理由がそのまま出る:
+
+```
+[discord] 失敗: HTTP 401 curl終了コード=22 応答={"message":"Invalid Webhook Token"...}
+[mail] 失敗: curl終了コード=67 内容=... Authentication failed ...
+```
+
+同じ内容はコンテナの標準出力にも流れるので、こちらでも追える:
+
+```
+docker compose logs -f asterisk | grep -E '\[notify\]|\[discord\]|\[mail\]'
+```
+
+> **補足**: 以前は `logger`（syslog）にだけ書いていたが、コンテナ内に syslog が
+> 存在しないためログが消えていた。現在はファイルと標準出力の両方に出す。
+> 出力先は `NOTIFY_LOG` で変更でき、1MBを超えると `notify.log.1` に退避される。
+
 ### 動作確認
 
-録音を待たずにスクリプトを直接叩けばテストできる（`.env` の設定がそのまま使われる）:
+電話をかけずに通知経路だけを試せる。`.env` の設定がそのまま使われる。
 
 ```
-# 適当な録音ファイルを1つ選んで通知させてみる
-docker exec asterisk bash -c \
-  'bash /etc/asterisk/scripts/notify.sh "$(ls -t /var/spool/asterisk/recordings/*.wav | head -1)" 5105'
+# 最新の録音（無ければ案内音声）を使ってテスト送信する
+docker exec asterisk bash /etc/asterisk/scripts/notify.sh --test
 
-# 結果はコンテナのログに出る
-docker compose logs --tail=20 asterisk
+# 結果を確認
+tail -20 recordings/notify.log
 ```
 
-Linphone から `203`（録音テスト）にダイヤルすると録音そのものの確認ができる。
+Linphone からダイヤルしてもテストできる:
+
+| 内線 | 内容 |
+| --- | --- |
+| `203` | 録音そのもののテスト（録って聞き返す） |
+| `204` | 通知のテスト（Discord/メールを送るだけ） |
+
+メールが失敗するときは `.env` に `MAIL_DEBUG=1` を足すと、
+curl のSMTP通信内容までログに出る（パスワードは出力されない）。
 
 ### 通知されないときは
 
+- **ログに何も出ない** → そもそも通知が呼ばれていない。`docker exec -it asterisk asterisk -rvvv`
+  で着信させ、`=== 通知スクリプトを起動:` の行が出るか確認する。
+  `録音なしのため通知しません` なら、録音自体が作られていない。
 - **何も飛ばない** → `NOTIFY_DISCORD` / `NOTIFY_EMAIL` が `0` のまま。
-  ログに「通知先がすべてオフのため送信しません」が出る。
+  ログに「Discordはオフのためスキップ」「通知先がすべてオフ」が出る。
 - **短い伝言だけ届かない** → 8KB（約0.5秒）未満は無言切断とみなして送らない仕様。
   しきい値は `NOTIFY_MIN_BYTES` で変えられる。
 - **メールだけ失敗する** → ログの `mail` タグに curl のエラーが出る。
