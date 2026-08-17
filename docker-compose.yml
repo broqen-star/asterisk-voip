@@ -6,10 +6,34 @@ services:
     # ブリッジ+ポート指定だと音声が片通話になりがち。
     network_mode: host
     restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Tokyo
     volumes:
       # 自分で書いた設定だけを個別に上書きし、他はイメージの既定を使う
       - ./asterisk/pjsip.conf:/etc/asterisk/pjsip.conf:ro
       - ./asterisk/extensions.conf:/etc/asterisk/extensions.conf:ro
       - ./asterisk/rtp.conf:/etc/asterisk/rtp.conf:ro
       - ./asterisk/sounds:/usr/share/asterisk/sounds/en/custom:ro
+      # Discord通知スクリプト
+      - ./asterisk/scripts:/etc/asterisk/scripts:ro
+      # 不応答時の録音（伝言）の保存先。ここだけ書き込み可(rw)にする
+      - ./recordings:/var/spool/asterisk/recordings
 
+  # 古い録音の定期削除。asterisk 本体とは分けて常駐させる。
+  cleanup:
+    image: alpine:3.20
+    container_name: asterisk-cleanup
+    restart: unless-stopped
+    environment:
+      - RETENTION_DAYS=${RETENTION_DAYS:-30}   # この日数より古い録音を削除
+      - CLEAN_INTERVAL=86400                   # 24時間ごとに実行
+      - DRY_RUN=${CLEANUP_DRY_RUN:-0}          # 1 にすると消さず一覧表示のみ
+      - REC_DIR=/recordings
+    volumes:
+      - ./recordings:/recordings               # 削除するので :ro は付けない
+      - ./asterisk/scripts:/scripts:ro
+      - /etc/localtime:/etc/localtime:ro       # ログの時刻をホストのJSTに合わせる
+    command: ["sh", "/scripts/cleanup-recordings.sh"]
+    
