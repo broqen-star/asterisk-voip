@@ -188,6 +188,213 @@ exten => _0X.,1,Dial(PJSIP/${EXTEN}@ht813,60)    ; 0発信の外線
 
 ---
 
+## 8. 不応答時の伝言通知（Discord / メール）
+
+内線200が `RING_TIMEOUT` 秒以内に出ないと、案内を流して伝言を録音し、
+録音があれば通知が飛ぶ。通知先は **Discord とメールを個別にオン/オフ**できる。
+
+設定は `.env`（`.env.sample` をコピーして作る）で行う:
+
+```
+cp .env.sample .env
+```
+
+### オン/オフの切り替え
+
+```
+NOTIFY_DISCORD=1     # 1=Discordへ送る / 0=送らない
+NOTIFY_EMAIL=1       # 1=メールで送る / 0=送らない
+```
+
+両方 `1` なら両方に届く。両方 `0` なら録音だけ残り通知はしない。
+変更後は `docker compose up -d`（`.env` は起動時に読まれるため再起動が必要）。
+
+### Discord の設定
+
+```
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/【ID】/【トークン】
+```
+
+Discordのチャンネル設定 → 連携サービス → ウェブフック で発行する。
+**URLを知っている人は誰でも投稿できる**ので、`.env` ごと外部に出さないこと。
+
+### メールの設定
+
+```
+MAIL_SMTP_URL=smtps://smtp.gmail.com:465   # 587番なら smtp://... + MAIL_STARTTLS=1
+MAIL_STARTTLS=0
+MAIL_FROM=voip-notify@example.com
+MAIL_TO=you@example.com                    # カンマ区切りで複数可
+MAIL_USER=voip-notify@example.com          # 認証不要なサーバなら空でよい
+MAIL_PASS=【パスワード】
+MAIL_ATTACH=1                              # 0 にすると本文だけ（音声を添付しない）
+```
+
+ポートと URL スキームの対応:
+
+| ポート | MAIL_SMTP_URL | MAIL_STARTTLS |
+| --- | --- | --- |
+| 465（SMTPS） | `smtps://ホスト:465` | `0` |
+| 587（STARTTLS） | `smtp://ホスト:587` | `1` |
+
+> **Gmail を使う場合**: 2段階認証を有効にしたうえで「アプリ パスワード」を発行し、
+> `MAIL_PASS` にはそれを入れる。通常のログインパスワードでは弾かれる。
+
+送信は curl の SMTP 機能を使うので、追加インストールは不要。
+
+### 送信ログの確認（ここを見る）
+
+通知の実行結果は **`./recordings/notify.log`** に必ず残る。
+「送ったのか」「届かなかったのはなぜか」はまずこのファイルを見る。
+
+```
+tail -f recordings/notify.log
+```
+
+出力例（成功時）:
+
+```
+2026-08-17 09:12:03 [notify] 通知処理を開始: file=/var/spool/asterisk/recordings/20260817-091150_5105.wav cid=5105 discord=1 email=1
+2026-08-17 09:12:03 [discord] 送信: 音声付き file=20260817-091150_5105.wav size=182008bytes
+2026-08-17 09:12:04 [discord] 成功: HTTP 204 (音声付き): 20260817-091150_5105.wav
+2026-08-17 09:12:04 [mail] 送信: server=smtps://smtp.gmail.com:465 from=... to=... 添付=あり size=182008bytes
+2026-08-17 09:12:07 [mail] 成功: 添付あり: 20260817-091150_5105.wav → you@example.com
+2026-08-17 09:12:07 [notify] 通知処理を正常終了: 20260817-091150_5105.wav
+```
+
+失敗時は理由がそのまま出る:
+
+```
+[discord] 失敗: HTTP 401 curl終了コード=22 応答={"message":"Invalid Webhook Token"...}
+[mail] 失敗: curl終了コード=67 内容=... Authentication failed ...
+```
+
+同じ内容はコンテナの標準出力にも流れるので、こちらでも追える:
+
+```
+docker compose logs -f asterisk | grep -E '\[notify\]|\[discord\]|\[mail\]'
+```
+
+> **補足**: 以前は `logger`（syslog）にだけ書いていたが、コンテナ内に syslog が
+> 存在しないためログが消えていた。現在はファイルと標準出力の両方に出す。
+> 出力先は `NOTIFY_LOG` で変更でき、1MBを超えると `notify.log.1` に退避される。
+
+### 動作確認
+
+電話をかけずに通知経路だけを試せる。`.env` の設定がそのまま使われる。
+
+```
+# 最新の録音（無ければ案内音声）を使ってテスト送信する
+docker exec asterisk bash /etc/asterisk/scripts/notify.sh --test
+
+# 結果を確認
+tail -20 recordings/notify.log
+```
+
+Linphone からダイヤルしてもテストできる:
+
+| 内線 | 内容 |
+| --- | --- |
+| `203` | 録音そのもののテスト（録って聞き返す） |
+| `204` | 通知のテスト（Discord/メールを送るだけ） |
+
+メールが失敗するときは `.env` に `MAIL_DEBUG=1` を足すと、
+curl のSMTP通信内容までログに出る（パスワードは出力されない）。
+
+### メール送信の失敗コード早見表
+
+ログの `curl終了コード=` を見る。意味はログにも日本語で併記される。
+
+| コード | 意味 | 対処 |
+| --- | --- | --- |
+| 6 | ホスト名を解決できない | `MAIL_SMTP_URL` のホスト名を確認 |
+| 7 | 接続できない | ポート/ファイアウォールを確認 |
+| 28 | タイムアウト | サーバ到達性を確認 |
+| 35 | TLSハンドシェイク失敗 | ポートとスキームの対応（下表）を確認 |
+| 60 | サーバ証明書を検証できない | 下記「証明書エラー」参照 |
+| 67 | SMTP認証に失敗 | `MAIL_USER` / `MAIL_PASS` を確認 |
+
+### 証明書エラー（curl終了コード 60）
+
+接続はできているが、サーバ証明書をコンテナ内のCAストアで検証できない状態。
+社内メールサーバでよく起きる。まず証明書の中身を確認する（ホスト側で実行）:
+
+```
+echo | openssl s_client -connect メールサーバ:587 -starttls smtp 2>/dev/null \
+  | openssl x509 -noout -subject -issuer -dates
+```
+
+`subject` が接続先と違う名前（特に `*.〇〇` のワイルドカード）だった場合は、
+**証明書に有効な名前の一覧(SAN)** も確認する。ここに接続先名があれば設定は正しい。
+
+```
+echo | openssl s_client -connect メールサーバ:587 -starttls smtp 2>/dev/null \
+  | openssl x509 -noout -text | grep -A2 "Subject Alternative Name"
+
+dig +short -x サーバのIP        # 逆引きで正式名を調べる
+dig +short MX ドメイン名        # 事業者が案内するホスト名が分かることが多い
+```
+
+対処は上から順に検討する:
+
+1. **ホスト名不一致**なら、証明書の `subject`/SAN に出ている名前を
+   `MAIL_SMTP_URL` のホスト名に使う。これで直るなら一番きれい。
+   その名前がDNSに載っていない場合は `MAIL_RESOLVE` で接続先IPを固定する:
+
+   ```
+   MAIL_SMTP_URL=smtp://ms01.example.jp:587
+   MAIL_RESOLVE=ms01.example.jp:587:203.0.113.10
+   ```
+
+   証明書は正しい名前で検証されたまま、接続だけIP直結になる。
+2. **社内CA/自己署名**なら、CA証明書(PEM)を置いてパスを指定する（推奨）:
+
+   ```
+   mkdir -p certs && cp 社内CA.pem certs/ca.pem
+   ```
+
+   `docker-compose.yml` の asterisk サービスの volumes に1行足す:
+
+   ```
+   - ./certs:/etc/asterisk/certs:ro
+   ```
+
+   `.env`:
+
+   ```
+   MAIL_CAINFO=/etc/asterisk/certs/ca.pem
+   ```
+
+3. **どうしても解決しない場合の応急処置**:
+
+   ```
+   MAIL_TLS_INSECURE=1
+   ```
+
+   通信自体は暗号化されるが「相手が本物か」を確認しなくなる。
+   LAN内の自社サーバに限って使い、恒久策は 1 か 2 で行うこと。
+
+### 通知されないときは
+
+- **ログに何も出ない** → そもそも通知が呼ばれていない。`docker exec -it asterisk asterisk -rvvv`
+  で着信させ、`=== 通知スクリプトを起動:` の行が出るか確認する。
+  `録音なしのため通知しません` なら、録音自体が作られていない。
+- **何も飛ばない** → `NOTIFY_DISCORD` / `NOTIFY_EMAIL` が `0` のまま。
+  ログに「Discordはオフのためスキップ」「通知先がすべてオフ」が出る。
+- **短い伝言だけ届かない** → 既定で3秒未満の録音は通知しない仕様。
+  ビープ直後に切られたものやノイズを弾くため。`.env` の `NOTIFY_MIN_SEC` で変更できる
+  （`1` にすればほぼ全て通知、`5` にすれば通知が減る）。
+  **抑制されるのは通知だけで、録音ファイルは `./recordings` に残る**ので、
+  内線 `202` や直接再生で聞ける。ログにも「中止: 録音が短すぎます」と残る。
+- **メールだけ失敗する** → ログの `mail` タグに curl のエラーが出る。
+  認証エラーならアプリパスワード、接続エラーならポート/スキームの対応表を確認。
+- **`.env` を書き換えたのに反映されない** → `docker compose restart` ではなく
+  `docker compose up -d` で作り直す。
+
+---
+
+---
+
 ## トラブルシューティング
 
 - **【最頻出】REGISTERは届いているのに Asterisk が無反応（ファイアウォール ufw）**
