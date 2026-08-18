@@ -31,6 +31,9 @@ services:
       - CLEAN_INTERVAL=86400                   # 24時間ごとに実行
       - DRY_RUN=${CLEANUP_DRY_RUN:-0}          # 1 にすると消さず一覧表示のみ
       - REC_DIR=/recordings
+      # 品質調査録音は 1通話で数MB 食うので、保存日数は短めにする
+      - QA_DIR=/recordings/qa
+      - QA_RETENTION_DAYS=${QA_RETENTION_DAYS:-7}
     volumes:
       - ./recordings:/recordings               # 削除するので :ro は付けない
       - ./asterisk/scripts:/scripts:ro
