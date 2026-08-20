@@ -16,6 +16,9 @@ services:
       - ./asterisk/extensions.conf:/etc/asterisk/extensions.conf:ro
       - ./asterisk/rtp.conf:/etc/asterisk/rtp.conf:ro
       - ./asterisk/sounds:/usr/share/asterisk/sounds/en/custom:ro
+      # 呼び出し中アナウンス（保留音として流す）
+      - ./asterisk/musiconhold.conf:/etc/asterisk/musiconhold.conf:ro
+      - ./asterisk/moh:/var/lib/asterisk/moh/announce:ro
       # Discord通知スクリプト
       - ./asterisk/scripts:/etc/asterisk/scripts:ro
       # 不応答時の録音（伝言）の保存先。ここだけ書き込み可(rw)にする
